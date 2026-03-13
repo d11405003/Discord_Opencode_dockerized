@@ -259,8 +259,20 @@ Commands:
     update              Update OpenCode to the latest version
     version             Show OpenCode version in the container
     config [show|edit|path]  Show, edit, or print config file path
+    discord [cmd]       Manage Discord bot for remote control
     clean               Remove the Docker image
     help                Show this help message
+
+Discord Commands:
+    discord setup       Run Discord bot setup wizard
+    discord start       Start the Discord bot
+    discord stop        Stop the Discord bot
+    discord deploy      Deploy slash commands to Discord
+    discord config      Show bot configuration
+    discord allow add <user_id>   Add user to allowlist
+    discord allow remove <user_id> Remove user from allowlist
+    discord allow list              List allowed users
+    discord allow reset            Reset allowlist
 
 Environment Variables:
     DRY_RUN=true        Print the Docker command without executing it
@@ -271,6 +283,8 @@ Examples:
     $0 auth                         # Authenticate with your LLM provider
     $0 build                        # Build the Docker image
     $0 update                       # Update OpenCode to latest version
+    $0 discord setup                # Setup Discord bot
+    $0 discord start                # Start Discord bot
     $0 config show                  # Show current configuration
     $0 config edit                  # Edit config in \$EDITOR
     $0 clean                        # Remove Docker image
@@ -281,6 +295,12 @@ Getting Started:
     2. $0 build                     # Build the Docker image
     3. $0 auth                      # Authenticate with your LLM provider
     4. $0 run /path/to/project      # Run OpenCode
+
+Discord Remote Control:
+    To enable remote control via Discord:
+    1. $0 discord setup             # Run interactive setup wizard
+    2. $0 discord start             # Start the bot
+    3. Use Discord commands like /opencode to control OpenCode remotely
 
 Security Features:
     - Isolated environment: only access to mounted project directory
@@ -303,6 +323,155 @@ show_version() {
         -e "HOST_UID=$(id -u)" \
         -e "HOST_GID=$(id -g)" \
         "$IMAGE_NAME" opencode --version
+}
+
+# Function to run Discord bot commands
+run_discord() {
+    local subcommand="${1:-start}"
+    shift || true
+
+    check_image "$IMAGE_NAME" || exit 1
+
+    # Parse custom config and build docker arguments
+    parse_config
+    build_mount_args
+    build_env_args
+    build_common_docker_args
+
+    # Build volume mount arguments for remote-opencode
+    local -a discord_volume_args=(
+        -v "$HOME/.local/share/opencode:/home/coder/.local/share/opencode"
+        -v "$HOME/.cache/opencode:/home/coder/.cache/opencode"
+        -v "$HOME/.config/opencode:/home/coder/.config/opencode:ro"
+        -v "$HOME/.remote-opencode:/home/coder/.remote-opencode"
+    )
+
+    case "$subcommand" in
+        setup)
+            print_info "Running Discord bot setup wizard..."
+            docker run -it \
+                --name "opencode-discord-setup-$$" \
+                "${DOCKER_COMMON_ARGS[@]}" \
+                "${discord_volume_args[@]}" \
+                "${DOCKER_MOUNT_ARGS[@]}" \
+                "${DOCKER_ENV_ARGS[@]}" \
+                "$IMAGE_NAME" \
+                remote-opencode setup
+            ;;
+        start)
+            print_info "Starting Discord bot..."
+            # Use --detach to run in background with --restart (not --rm)
+            # Build docker args without --rm since we're using --restart
+            local -a discord_common_args=(
+                --network host
+                --restart unless-stopped
+                -e "HOST_UID=$(id -u)"
+                -e "HOST_GID=$(id -g)"
+                -e "TERM=${TERM:-xterm-256color}"
+            )
+            docker run -d \
+                --name "opencode-discord-bot-$$" \
+                "${discord_common_args[@]}" \
+                "${discord_volume_args[@]}" \
+                "${DOCKER_MOUNT_ARGS[@]}" \
+                "${DOCKER_ENV_ARGS[@]}" \
+                "$IMAGE_NAME" \
+                remote-opencode start
+            print_success "Discord bot started"
+            ;;
+        stop)
+            print_info "Stopping Discord bot..."
+            docker rm -f "opencode-discord-bot-$$" 2>/dev/null || true
+            print_success "Discord bot stopped"
+            ;;
+        deploy)
+            print_info "Deploying Discord slash commands..."
+            docker run --rm \
+                "${DOCKER_COMMON_ARGS[@]}" \
+                "${discord_volume_args[@]}" \
+                "${DOCKER_MOUNT_ARGS[@]}" \
+                "${DOCKER_ENV_ARGS[@]}" \
+                "$IMAGE_NAME" \
+                remote-opencode deploy
+            print_success "Slash commands deployed"
+            ;;
+        config)
+            print_info "Showing Discord bot configuration..."
+            docker run --rm \
+                "${DOCKER_COMMON_ARGS[@]}" \
+                "${discord_volume_args[@]}" \
+                "${DOCKER_ENV_ARGS[@]}" \
+                "$IMAGE_NAME" \
+                remote-opencode config
+            ;;
+        allow)
+            local action="${1:-list}"
+            shift || true
+            case "$action" in
+                add)
+                    local user_id="$1"
+                    if [ -z "$user_id" ]; then
+                        print_error "User ID required. Usage: $0 discord allow add <user_id>"
+                        exit 1
+                    fi
+                    docker run --rm \
+                        "${DOCKER_COMMON_ARGS[@]}" \
+                        "${discord_volume_args[@]}" \
+                        "${DOCKER_ENV_ARGS[@]}" \
+                        "$IMAGE_NAME" \
+                        remote-opencode allow add "$user_id"
+                    ;;
+                remove)
+                    local user_id="$1"
+                    if [ -z "$user_id" ]; then
+                        print_error "User ID required. Usage: $0 discord allow remove <user_id>"
+                        exit 1
+                    fi
+                    docker run --rm \
+                        "${DOCKER_COMMON_ARGS[@]}" \
+                        "${discord_volume_args[@]}" \
+                        "${DOCKER_ENV_ARGS[@]}" \
+                        "$IMAGE_NAME" \
+                        remote-opencode allow remove "$user_id"
+                    ;;
+                list)
+                    docker run --rm \
+                        "${DOCKER_COMMON_ARGS[@]}" \
+                        "${discord_volume_args[@]}" \
+                        "${DOCKER_ENV_ARGS[@]}" \
+                        "$IMAGE_NAME" \
+                        remote-opencode allow list
+                    ;;
+                reset)
+                    docker run --rm \
+                        "${DOCKER_COMMON_ARGS[@]}" \
+                        "${discord_volume_args[@]}" \
+                        "${DOCKER_ENV_ARGS[@]}" \
+                        "$IMAGE_NAME" \
+                        remote-opencode allow reset
+                    ;;
+                *)
+                    print_error "Unknown allow subcommand: $action"
+                    echo "Usage: $0 discord allow [add|remove|list|reset] [user_id]"
+                    exit 1
+                    ;;
+            esac
+            ;;
+        *)
+            print_error "Unknown Discord command: $subcommand"
+            echo
+            echo "Usage: $0 discord [setup|start|stop|deploy|config|allow]"
+            echo
+            echo "Commands:"
+            echo "    setup           Run Discord bot setup wizard"
+            echo "    start           Start the Discord bot"
+            echo "    stop            Stop the Discord bot"
+            echo "    deploy          Deploy slash commands to Discord"
+            echo "    config          Show bot configuration"
+            echo "    allow [cmd]     Manage user allowlist"
+            exit 1
+            ;;
+    esac
 }
 
 # Main script logic
@@ -334,6 +503,9 @@ main() {
             ;;
         clean)
             clean_image
+            ;;
+        discord)
+            run_discord "$@"
             ;;
         help|--help|-h)
             show_help

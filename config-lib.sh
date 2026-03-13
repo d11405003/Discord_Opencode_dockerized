@@ -163,6 +163,11 @@ build_standard_volume_args() {
         VOLUME_ARGS+=(-v "$HOME/.cache/oh-my-opencode:/home/coder/.cache/oh-my-opencode")
     fi
 
+    # remote-opencode config directory (Discord bot configuration)
+    if [ -d "$HOME/.remote-opencode" ]; then
+        VOLUME_ARGS+=(-v "$HOME/.remote-opencode:/home/coder/.remote-opencode")
+    fi
+
     # MCP authentication directory (optional)
     if [ -d "$HOME/.mcp-auth" ]; then
         VOLUME_ARGS+=(-v "$HOME/.mcp-auth:/home/coder/.mcp-auth:ro")

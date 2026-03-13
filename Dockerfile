@@ -28,6 +28,9 @@ RUN apt-get update && apt-get install -y \
     procps \
     tmux \
     lsof \
+    python3 \
+    python3-pip \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Docker CLI only (uses host Docker daemon via mounted socket)
@@ -56,14 +59,15 @@ RUN curl -s "https://get.sdkman.io" | bash && \
     sdk install java ${JAVA_VERSION} && \
     sdk default java ${JAVA_VERSION}"
 
-# Install NVM and Node.js LTS as coder user
+# Install NVM and Node.js 22+ (required for remote-opencode)
 ENV NVM_DIR="/home/coder/.nvm"
+ARG NODE_VERSION=22
 RUN curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/${NVM_VERSION}/install.sh" | bash && \
     bash -c "source $NVM_DIR/nvm.sh && \
-    nvm install --lts && \
-    nvm alias default node && \
+    nvm install ${NODE_VERSION} && \
+    nvm alias default ${NODE_VERSION} && \
     nvm use default && \
-    ln -sf \$(dirname \$(which node)) $NVM_DIR/default"
+    ln -sf $(dirname $(which node)) $NVM_DIR/default"
 
 # Install uv (Python package manager) as coder user
 # See: https://docs.astral.sh/uv/getting-started/installation/
@@ -90,6 +94,9 @@ ENV JAVA_HOME="/home/coder/.sdkman/candidates/java/current"
 ARG OPENCODE_BUILD_TIME=0
 RUN bash -c "source $NVM_DIR/nvm.sh && npm install -g opencode-ai@latest"
 
+# Install remote-opencode Discord bot (requires Node.js 22+)
+RUN bash -c "source $NVM_DIR/nvm.sh && npm install -g remote-opencode"
+
 # Switch back to root for entrypoint setup
 USER root
 
@@ -98,6 +105,7 @@ RUN mkdir -p /home/coder/.config/opencode && \
     mkdir -p /home/coder/.local/share/opencode && \
     mkdir -p /home/coder/.cache/opencode && \
     mkdir -p /home/coder/.cache/oh-my-opencode && \
+    mkdir -p /home/coder/.remote-opencode && \
     mkdir -p /home/coder/.gradle && \
     mkdir -p /home/coder/.npm && \
     mkdir -p /home/coder/.m2 && \
